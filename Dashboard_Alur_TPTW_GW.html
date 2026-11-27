@@ -201,6 +201,9 @@ const isoDay = ms => new Date(ms).toISOString().slice(0, 10);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const median = a => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; };
+// min/max tanpa spread (aman untuk ratusan ribu elemen)
+const maxOf = (a, init = -Infinity) => { let m = init; for (const x of a) if (x > m) m = x; return m; };
+const minOf = (a, init = Infinity) => { let m = init; for (const x of a) if (x < m) m = x; return m; };
 const mode = a => { const c = {}; let b = null, n = 0; for (const x of a) { c[x] = (c[x] || 0) + 1; if (c[x] > n) { n = c[x]; b = x; } } return b; };
 const WVARS = ['--w1', '--w2', '--w3', '--w4', '--w5'];
 const MAXPTS = 25000;
@@ -359,7 +362,7 @@ function renderMain(d) {
   const pts = d.filter(r => r.yDep != null && r.yArr != null && r.yDep >= r.x - 1);
   if (pts.length > MAXPTS) { el.innerHTML = `<div class="drop" style="padding:60px 20px"><b>${nf(pts.length)} paket terlalu banyak untuk digambar</b>Pilih DP atau persempit tanggal (maks. ${nf(MAXPTS)} paket).</div>`; $('lgMain').innerHTML = ''; return; }
   const arrS = pts.map(r => r.yArr).sort((a, b) => a - b), p99 = arrS.length ? arrS[Math.floor((arrS.length - 1) * 0.99)] : 0;
-  const maxY = Math.min(48, Math.max(26, Math.ceil(Math.max(p99, ...d.map(r => r.yPlan ?? 0)) / 2) * 2 + 2));
+  const maxY = Math.min(48, Math.max(26, Math.ceil(maxOf(d.map(r => r.yPlan ?? 0), p99) / 2) * 2 + 2));
   const nClip = pts.filter(r => r.yArr > maxY).length;
   const X = x => m.l + x / 24 * iw, Y = y => m.t + ih - Math.min(y, maxY) / maxY * ih;
   const grid = css('--grid'), mut = css('--muted'), bad = css('--bad');
@@ -436,7 +439,7 @@ function renderWave(d) {
     const L = o.list, late = L.filter(r => r.late).length;
     const deps = L.filter(r => r.dep != null).map(r => hm(r.dep)).sort();
     const sameDay = L.filter(r => !r.late && r.dep != null && r.dep >= r.konf && (r.dd === 0 || (r.dd === 1 && (r.dep % DAY) < 6 * H)));
-    const cut = sameDay.length ? hm(Math.max(...sameDay.map(r => (r.konf - r.day0) + (r.dd === 1 ? 0 : 0)))) : '–';
+    const cut = sameDay.length ? hm(maxOf(sameDay.map(r => (r.konf - r.day0) + (r.dd === 1 ? 0 : 0)))) : '–';
     const tr = L.filter(r => r.yArr != null && r.yDep != null).map(r => (r.yArr - r.yDep) * 60).filter(v => v >= 0);
     const arrs = L.filter(r => r.arr != null).map(r => hm(r.arr));
     return [(multi ? esc(o.dp) + ' • ' : '') + `<i class="sw" style="background:${wColor(o.wkey)}"></i> ` + esc(wLabel(o.wkey, o.dp)),
@@ -505,7 +508,7 @@ function setupFilters() {
   const gws = [...new Set(rows.map(r => r.gw).filter(Boolean))].sort();
   $('qGw').innerHTML = '<option value="">Semua</option>' + gws.map(x => `<option>${esc(x)}</option>`).join('');
   const days = rows.map(r => r.day0);
-  if (days.length) { $('qFrom').min = $('qTo').min = isoDay(Math.min(...days)); $('qFrom').max = $('qTo').max = isoDay(Math.max(...days)); }
+  if (days.length) { $('qFrom').min = $('qTo').min = isoDay(minOf(days)); $('qFrom').max = $('qTo').max = isoDay(maxOf(days)); }
 }
 $('qDp').addEventListener('change', e => { const v = e.target.value.trim(); st.dp = rows.some(r => r.dp === v) ? v : ''; if (!st.dp) e.target.value = ''; st.hidden.clear(); render(); });
 $('qFrom').addEventListener('change', e => { st.from = e.target.value; render(); });
