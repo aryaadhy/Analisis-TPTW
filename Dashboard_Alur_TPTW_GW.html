@@ -113,6 +113,8 @@ tbody tr:hover{background:var(--accent-soft)}
       <datalist id="dpList"></datalist>
       <label>Tanggal pickup dari <input type="date" id="qFrom"></label>
       <label>s/d <input type="date" id="qTo"></label>
+      <label>Jam pickup <select id="qH1"></select></label>
+      <label>s/d <select id="qH2"></select></label>
       <label>Status <span class="seg" id="qSt"><button data-v="" class="on">Semua</button><button data-v="ok">Tepat</button><button data-v="late">Telat</button></span></label>
       <label>Kategori <select id="qKat"><option value="">Semua</option></select></label>
       <label>GW <select id="qGw"><option value="">Semua</option></select></label>
@@ -242,7 +244,7 @@ function sniff(buf) {
 let src = {T: null}, names = {T: ''};
 let rows = [];
 let waveByDp = {};
-let st = {dp: '', from: '', to: '', status: '', kat: '', gw: '', color: 'wave', hidden: new Set(), q: ''};
+let st = {dp: '', from: '', to: '', h1: '', h2: '', status: '', kat: '', gw: '', color: 'wave', hidden: new Set(), q: ''};
 
 // ---------- derivasi (hanya TPTW) ----------
 function build() {
@@ -310,7 +312,10 @@ const wColor = k => k[0] === 'w' ? css(WVARS[+k.slice(1)]) : css('--wl');
 
 function filtered() {
   const f = st.from ? Date.parse(st.from) : -Infinity, t = st.to ? Date.parse(st.to) + DAY : Infinity;
-  return rows.filter(r => (!st.dp || r.dp === st.dp) && r.day0 >= f && r.day0 < t &&
+  const h1 = st.h1 === '' ? 0 : +st.h1, h2 = st.h2 === '' ? 23 : +st.h2;
+  // rentang jam inklusif; bila 'dari' > 's/d' (mis. 20 s/d 03) rentang melewati tengah malam
+  const inH = h => h1 <= h2 ? h >= h1 && h <= h2 : h >= h1 || h <= h2;
+  return rows.filter(r => (!st.dp || r.dp === st.dp) && r.day0 >= f && r.day0 < t && inH(Math.floor(r.x)) &&
     (!st.status || (st.status === 'late') === r.late) && (!st.kat || (st.kat === '__normal' ? !r.kat : r.kat === st.kat)) && (!st.gw || r.gw === st.gw));
 }
 
@@ -496,7 +501,8 @@ function tip(e, text) { const t = $('tip'); t.textContent = text; t.hidden = fal
 // ---------- UI ----------
 function setupFilters() {
   // data baru: reset semua filter
-  Object.assign(st, {dp: '', from: '', to: '', status: '', kat: '', q: ''}); st.hidden.clear();
+  Object.assign(st, {dp: '', from: '', to: '', h1: '', h2: '', status: '', kat: '', q: ''}); st.hidden.clear();
+  $('qH1').value = ''; $('qH2').value = '';
   ['qDp', 'qFrom', 'qTo', 'qTbl'].forEach(i => $(i).value = '');
   const kats = [...new Set(rows.map(r => r.kat).filter(Boolean))].sort();
   $('qKat').innerHTML = '<option value="">Semua</option><option value="__normal">Normal (tanpa kategori)</option>' + kats.map(x => `<option>${esc(x)}</option>`).join('');
@@ -512,6 +518,10 @@ function setupFilters() {
 }
 $('qDp').addEventListener('change', e => { const v = e.target.value.trim(); st.dp = rows.some(r => r.dp === v) ? v : ''; if (!st.dp) e.target.value = ''; st.hidden.clear(); render(); });
 $('qFrom').addEventListener('change', e => { st.from = e.target.value; render(); });
+$('qH1').innerHTML = '<option value="">Semua</option>' + Array.from({length: 24}, (_, h) => `<option value="${h}">${pad(h)}:00</option>`).join('');
+$('qH2').innerHTML = '<option value="">Semua</option>' + Array.from({length: 24}, (_, h) => `<option value="${h}">${pad(h)}:59</option>`).join('');
+$('qH1').addEventListener('change', e => { st.h1 = e.target.value; render(); });
+$('qH2').addEventListener('change', e => { st.h2 = e.target.value; render(); });
 $('qTo').addEventListener('change', e => { st.to = e.target.value; render(); });
 $('qKat').addEventListener('change', e => { st.kat = e.target.value; render(); });
 $('qGw').addEventListener('change', e => { st.gw = e.target.value; render(); });
@@ -522,8 +532,8 @@ for (const [id, key] of [['qSt', 'status'], ['qColor', 'color']]) $(id).addEvent
   st[key] = b.dataset.v; if (key === 'color') st.hidden.clear(); render();
 });
 $('bReset').onclick = () => {
-  Object.assign(st, {from: '', to: '', status: '', kat: '', gw: '', q: ''}); st.hidden.clear();
-  ['qFrom', 'qTo', 'qTbl'].forEach(i => $(i).value = ''); $('qKat').value = ''; $('qGw').value = '';
+  Object.assign(st, {from: '', to: '', h1: '', h2: '', status: '', kat: '', gw: '', q: ''}); st.hidden.clear();
+  ['qFrom', 'qTo', 'qTbl', 'qH1', 'qH2'].forEach(i => $(i).value = ''); $('qKat').value = ''; $('qGw').value = '';
   $('qSt').querySelectorAll('button').forEach((x, i) => x.classList.toggle('on', i === 0));
   if (new Set(rows.map(r => r.dp)).size > 1) { st.dp = ''; $('qDp').value = ''; }
   render();
