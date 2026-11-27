@@ -62,6 +62,10 @@ h1{font-size:22px;margin:0;font-weight:650;letter-spacing:-.01em}
 .legend .it{display:inline-flex;align-items:center;gap:5px;cursor:pointer;user-select:none}
 .legend .it.off{opacity:.35}
 .sw{width:10px;height:10px;border-radius:3px;display:inline-block;flex:none}
+.heli-sum{display:grid;grid-template-columns:max-content minmax(80px,1fr) max-content;gap:5px 10px;align-items:center;
+  font-size:12px;color:var(--fg2);margin:0 0 12px;font-variant-numeric:tabular-nums}
+.heli-sum .bar{height:12px;border-radius:3px;min-width:2px}
+.heli-sum .top{font-weight:650;color:var(--fg)}
 .chart{width:100%;position:relative}
 .chart svg{display:block;width:100%;overflow:visible}
 .chart text{font-family:var(--f)}
@@ -122,6 +126,16 @@ tbody tr:hover{background:var(--accent-soft)}
     </div>
 
     <section class="tiles" id="tiles"></section>
+
+    <section class="card">
+      <h2>Helicopter view: telat berasal dari ritase ke berapa?</h2>
+      <p class="note">Semua paket dihitung (tanpa batas jumlah). Paket dikelompokkan per slot jam pickup dan diwarnai menurut ritase/wave armada yang membawanya.
+        Panel atas = semua paket, panel bawah = paket telat. <b>Ritase 1</b> = wave keberangkatan pertama tiap DP (hari dihitung mulai 12:00: sore → malam → dini hari).
+        Garis merah putus-putus = jam pickup tempat batas sampai GW berubah (tampil bila 1 DP dipilih). Klik legenda untuk menyembunyikan ritase; arahkan kursor ke batang untuk detail.</p>
+      <div class="heli-sum" id="sHeli"></div>
+      <div class="legend" id="lgHeli"></div>
+      <div class="chart" id="cHeli"></div>
+    </section>
 
     <section class="card">
       <h2>Jam pickup, armada yang diikuti, dan jam sampai GW</h2>
@@ -324,7 +338,7 @@ function filtered() {
 // ---------- render ----------
 function render() {
   const d = filtered();
-  renderTiles(d); renderMain(d); renderWave(d); renderLate(d); renderHour(d); renderDet(d);
+  renderTiles(d); renderHeli(d); renderMain(d); renderWave(d); renderLate(d); renderHour(d); renderDet(d);
 }
 
 // Batas sampai GW per jam konfirmasi = modus Waktu Perencanaan (paket kategori normal), dibulatkan ke menit.
@@ -367,7 +381,7 @@ function renderMain(d) {
   const el = $('cMain'), W = Math.max(640, el.clientWidth || 900), Hh = 560;
   const m = {l: 78, r: 104, t: 10, b: 34}, iw = W - m.l - m.r, ih = Hh - m.t - m.b;
   const pts = d.filter(r => r.yDep != null && r.yArr != null && r.yDep >= r.x - 1);
-  if (pts.length > MAXPTS) { el.innerHTML = `<div class="drop" style="padding:60px 20px"><b>${nf(pts.length)} paket terlalu banyak untuk digambar</b>Pilih DP, persempit tanggal, atau persempit jam pickup (maks. ${nf(MAXPTS)} paket).</div>`; $('lgMain').innerHTML = ''; return; }
+  if (pts.length > MAXPTS) { el.innerHTML = `<div class="drop" style="padding:60px 20px"><b>${nf(pts.length)} paket terlalu banyak untuk digambar</b>Lihat <b>Helicopter view</b> di atas untuk gambaran semua paket. Untuk detail per paket: pilih DP, persempit tanggal, atau persempit jam pickup (maks. ${nf(MAXPTS)} paket).</div>`; $('lgMain').innerHTML = ''; return; }
   const arrS = pts.map(r => r.yArr).sort((a, b) => a - b), p99 = arrS.length ? arrS[Math.floor((arrS.length - 1) * 0.99)] : 0;
   const maxY = Math.min(48, Math.max(26, Math.ceil(maxOf(d.map(r => r.yPlan ?? 0), p99) / 2) * 2 + 2));
   const nClip = pts.filter(r => r.yArr > maxY).length;
@@ -431,6 +445,78 @@ function renderMain(d) {
     return `<span class="it${st.hidden.has(k) ? ' off' : ''}" data-k="${k}"><i class="sw" style="background:${col}"></i>${esc(lab)} (${nf(n)})</span>`;
   }).join('') + `<span class="muted">● berangkat ▲ sampai GW${d.length - pts.length ? ' • ' + nf(d.length - pts.length) + ' paket tanpa data waktu lengkap tidak digambar' : ''}${nClip ? ' • ' + nf(nClip) + ' paket sampai GW di luar skala, digambar di tepi atas' : ''}</span>`;
   $('lgMain').querySelectorAll('.it').forEach(e => e.onclick = () => { const k = e.dataset.k; st.hidden.has(k) ? st.hidden.delete(k) : st.hidden.add(k); renderMain(filtered()); });
+}
+
+// ---------- helicopter view: agregat per slot jam pickup × ritase (tanpa batas jumlah paket) ----------
+const hHidden = new Set();
+const rLabel = (k, dpSel) => dpSel || k[0] !== 'w' ? wLabel(k, dpSel) : 'Ritase ' + (+k.slice(1) + 1) + (k === 'w4' ? '+' : '');
+const niceMax = v => { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)), f = v / p; return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p; };
+const mmLabel = m => pad(Math.floor(m / 60) % 24) + ':' + pad(m % 60) + (m >= 1440 ? ' H+' + Math.floor(m / 1440) : '');
+function renderHeli(d) {
+  const el = $('cHeli');
+  if (!d.length) { el.innerHTML = '<p class="muted">Tidak ada paket untuk filter ini.</p>'; $('lgHeli').innerHTML = $('sHeli').innerHTML = ''; return; }
+  const dpSel = st.dp || (new Set(d.map(r => r.dp)).size === 1 ? d[0].dp : '');
+  // ukuran slot otomatis: 5/10/15/30/60 menit, maksimal ±48 slot
+  let lo = Infinity, hi = -Infinity; for (const r of d) { if (r.x < lo) lo = r.x; if (r.x > hi) hi = r.x; }
+  const bm = [5, 10, 15, 30, 60].find(b => (hi - lo) * 60 / b <= 48) || 60;
+  const b0 = Math.floor(lo * 60 / bm), nb = Math.floor(hi * 60 / bm) - b0 + 1;
+  const keys = WKEYS.filter(k => d.some(r => r.wkey === k));
+  const all = Array.from({length: nb}, () => ({})), lat = Array.from({length: nb}, () => ({})), tot = {}, totL = {};
+  let nLate = 0;
+  for (const r of d) {
+    const i = Math.min(nb - 1, Math.max(0, Math.floor(r.x * 60 / bm) - b0)), k = r.wkey;
+    all[i][k] = (all[i][k] || 0) + 1; tot[k] = (tot[k] || 0) + 1;
+    if (r.late) { lat[i][k] = (lat[i][k] || 0) + 1; totL[k] = (totL[k] || 0) + 1; nLate++; }
+  }
+  // ringkasan: kontribusi telat per ritase (diurutkan dari penyumbang terbesar)
+  const ord = keys.slice().sort((a, b) => (totL[b] || 0) - (totL[a] || 0)), mx = Math.max(1, totL[ord[0]] || 0);
+  $('sHeli').innerHTML = nLate ? ord.map((k, j) => { const n = totL[k] || 0, cls = j === 0 && n ? ' class="top"' : '';
+    return `<span${cls}><i class="sw" style="background:${wColor(k)}"></i> ${esc(rLabel(k, dpSel))}</span>` +
+      `<div class="bar" style="width:${n / mx * 100}%;background:${wColor(k)}"></div>` +
+      `<span${cls}>${nf(n)} telat • ${pct(n, nLate)} dari semua telat • ${pct(n, tot[k])} paket ritase ini telat</span>`; }).join('')
+    : '<span class="muted">Tidak ada paket telat pada filter ini.</span><span></span><span></span>';
+  $('lgHeli').innerHTML = keys.map(k => `<span class="it${hHidden.has(k) ? ' off' : ''}" data-k="${k}"><i class="sw" style="background:${wColor(k)}"></i>${esc(rLabel(k, dpSel))} (${nf(tot[k])})</span>`).join('') +
+    `<span class="muted">slot ${bm} menit</span>`;
+  $('lgHeli').querySelectorAll('.it').forEach(e => e.onclick = () => { const k = e.dataset.k; hHidden.has(k) ? hHidden.delete(k) : hHidden.add(k); renderHeli(filtered()); });
+  const vis = keys.filter(k => !hHidden.has(k));
+  const W = Math.max(640, el.clientWidth || 900), m = {l: 60, r: 12, t: 22, b: 30}, H1 = 200, gap = 40, H2 = 150, Hh = m.t + H1 + gap + H2 + m.b;
+  const iw = W - m.l - m.r, bw = iw / nb, X = i => m.l + i * bw;
+  const grid = css('--grid'), mut = css('--muted'), fg2 = css('--fg2'), bad = css('--bad');
+  let s = `<svg viewBox="0 0 ${W} ${Hh}" height="${Hh}">`;
+  const panel = (data, top, h, title) => {
+    const sums = data.map(o => vis.reduce((a, k) => a + (o[k] || 0), 0)), ymax = niceMax(maxOf(sums, 0));
+    const Y = v => top + h - v / ymax * h;
+    s += `<text x="${m.l}" y="${top - 8}" font-size="12" font-weight="600" fill="${fg2}">${title}</text>`;
+    for (let t = 0; t <= 4; t++) { const v = ymax * t / 4;
+      s += `<line x1="${m.l}" x2="${m.l + iw}" y1="${Y(v)}" y2="${Y(v)}" stroke="${grid}"/><text x="${m.l - 6}" y="${Y(v) + 4}" text-anchor="end" font-size="10" fill="${mut}">${nf(Math.round(v))}</text>`; }
+    data.forEach((o, i) => { let acc = 0;
+      for (const k of vis) { const n = o[k] || 0; if (!n) continue;
+        s += `<rect data-i="${i}" data-k="${k}" x="${X(i) + (bw > 4 ? 1 : 0)}" y="${Y(acc + n)}" width="${Math.max(1, bw - (bw > 4 ? 2 : 0))}" height="${Math.max(.5, Y(acc) - Y(acc + n))}" fill="${wColor(k)}"/>`;
+        acc += n; } });
+  };
+  panel(all, m.t, H1, 'Semua paket per slot jam pickup');
+  panel(lat, m.t + H1 + gap, H2, 'Paket telat per slot jam pickup');
+  // sumbu-x
+  const every = Math.ceil(nb / Math.max(1, Math.floor(iw / 56))), yb = m.t + H1 + gap + H2;
+  for (let i = 0; i <= nb; i += every) s += `<text x="${X(i)}" y="${yb + 14}" text-anchor="middle" font-size="10" fill="${mut}">${mmLabel((b0 + i) * bm)}</text>`;
+  s += `<text x="${m.l + iw / 2}" y="${Hh - 2}" text-anchor="middle" font-size="12" fill="${fg2}">Jam pickup</text>`;
+  // perubahan batas sampai GW (hanya bila 1 DP; skema batas berbeda per DP)
+  if (dpSel) { const step = deadlineStep(d);
+    for (let h = 0; h < 24; h++) { if (step[h] == null || (h && step[h] === step[h - 1])) continue;
+      const xi = h * 60 / bm - b0; if (xi < 0 || xi > nb) continue;
+      s += `<line x1="${X(xi)}" x2="${X(xi)}" y1="${m.t - 4}" y2="${yb}" stroke="${bad}" stroke-dasharray="4 3" stroke-width="1.5"/>` +
+        `<text x="${X(xi) + 4}" y="${m.t + 10}" font-size="11" font-weight="600" fill="${bad}" stroke="${css('--surface')}" stroke-width="3" paint-order="stroke">batas ${hLabel(step[h])}</text>`; } }
+  s += '</svg>';
+  el.innerHTML = s;
+  const svg = el.querySelector('svg');
+  svg.addEventListener('mousemove', e => {
+    const t = e.target.closest('rect[data-i]'); if (!t) { $('tip').hidden = true; return; }
+    const i = +t.dataset.i, k = t.dataset.k, n = all[i][k] || 0, nl = lat[i][k] || 0;
+    const sa = keys.reduce((a, q) => a + (all[i][q] || 0), 0), sl = keys.reduce((a, q) => a + (lat[i][q] || 0), 0);
+    tip(e, `Pickup ${mmLabel((b0 + i) * bm)}–${mmLabel((b0 + i + 1) * bm)}\n${rLabel(k, dpSel)}: ${nf(n)} paket, ${nf(nl)} telat (${pct(nl, n)})\n` +
+      `Slot ini: ${nf(sa)} paket, ${nf(sl)} telat (${pct(sl, sa)})\nRitase ini menyumbang ${pct(nl, sl)} telat di slot ini`);
+  });
+  svg.addEventListener('mouseleave', () => $('tip').hidden = true);
 }
 
 function table(id, head, body, cls = []) {
@@ -503,7 +589,7 @@ function tip(e, text) { const t = $('tip'); t.textContent = text; t.hidden = fal
 // ---------- UI ----------
 function setupFilters() {
   // data baru: reset semua filter
-  Object.assign(st, {dp: '', from: '', to: '', h1: '', h2: '', status: '', kat: '', q: ''}); st.hidden.clear();
+  Object.assign(st, {dp: '', from: '', to: '', h1: '', h2: '', status: '', kat: '', q: ''}); st.hidden.clear(); hHidden.clear();
   $('qH1').value = ''; $('qH2').value = '';
   ['qDp', 'qFrom', 'qTo', 'qTbl'].forEach(i => $(i).value = '');
   const kats = [...new Set(rows.map(r => r.kat).filter(Boolean))].sort();
@@ -538,7 +624,7 @@ $('bReset').onclick = () => {
   if (new Set(rows.map(r => r.dp)).size > 1) { st.dp = ''; $('qDp').value = ''; }
   render();
 };
-let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => rows.length && renderMain(filtered()), 150); });
+let rt; addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => { if (rows.length) { const d = filtered(); renderHeli(d); renderMain(d); } }, 150); });
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => rows.length && render());
 
 $('bExport').onclick = () => {
